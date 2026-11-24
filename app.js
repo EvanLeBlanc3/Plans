@@ -422,6 +422,13 @@ function downloadBlob(blob, name) {
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
+const helperURL = () => (settings.helper || '').trim().replace(/\/+$/, '');
+function b64url(str) {
+  const bytes = new TextEncoder().encode(str); let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+const appBase = () => location.href.split('#')[0].split('?')[0].replace(/[^/]*$/, '');
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const isStandalone = () => navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
 function calendarSheet(id) {
@@ -437,21 +444,94 @@ function calendarSheet(id) {
     <p class="hint" style="text-align:center;margin:12px 0 18px">Plans builds a real calendar invite: time, place, map pin, reminder, guests, food, drinks, notes &amp; reference numbers.</p>
     <div class="act-grid">
       <button class="btn primary full" data-act="cal-open" data-id="${p.id}">📅 Open in Calendar</button>
+      <button class="btn full" data-act="wallet" data-id="${p.id}">🪪 Add to Apple Wallet</button>
       <button class="btn full" data-act="cal-share" data-id="${p.id}">📤 Send invite (Messages, Mail, AirDrop…)</button>
       <button class="btn small full ghost" data-act="cal-save" data-id="${p.id}">💾 Save .ics file (choose “Save to Files”)</button>
     </div>
-    <p class="about">On iPhone, tap <b>Add All</b> when the calendar preview pops up.${isStandalone() ? '<br>Using Plans from your Home Screen? If no preview appears, use <b>Send invite</b> and send it to yourself, then tap it. Your friends can tap it too and it lands in their calendar.' : ''}</p>`);
+    <p class="about">On iPhone, tap <b>Add All</b> when the calendar preview pops up.${!helperURL() && isStandalone() ? '<br>Heads up: from the Home Screen app, Open in Calendar needs the free helper (Settings → Calendar &amp; Wallet helper).' : ''}</p>`);
 }
 function icsBlob(p) { return new Blob([buildICS(p)], { type: 'text/calendar;charset=utf-8' }); }
 function calOpen(p) {
-  // Same method as v1.0–1.3 (the one that worked): hand iOS a text/calendar blob, which pops the "Add All" preview.
+  const h = helperURL();
+  if (h) {
+    // Real https link served as text/calendar → iPhone shows Apple Calendar's "Add All" preview (works from the Home Screen app too)
+    Sound.play('sparkle');
+    location.href = `${h}/ics?n=${encodeURIComponent(slug(p.name))}&d=${b64url(buildICS(p))}`;
+    return;
+  }
+  if (isIOS && isStandalone()) return helperNeeded('calendar', p.id);
   Sound.play('sparkle');
   const blob = icsBlob(p);
-  if (isIOS) {
-    const url = URL.createObjectURL(blob);
-    if (isStandalone()) window.open(url, '_blank'); else location.href = url;
-    setTimeout(() => URL.revokeObjectURL(url), 120000);
-  } else downloadBlob(blob, `${slug(p.name)}.ics`);
+  if (isIOS) { const url = URL.createObjectURL(blob); location.href = url; setTimeout(() => URL.revokeObjectURL(url), 120000); }
+  else downloadBlob(blob, `${slug(p.name)}.ics`);
+}
+function helperNeeded(kind, id) {
+  openSheet(`<div class="d-hero"><span class="de">${kind === 'wallet' ? '🪪' : '📅'}</span><h2>One quick setup</h2></div>
+    <p class="hint" style="text-align:center;margin:10px 0 16px">${kind === 'wallet'
+      ? 'Wallet passes have to be signed by a small helper (a free Cloudflare Worker, like your other apps), using your Apple pass certificate.'
+      : 'iPhone won’t let Home Screen apps open Calendar directly, so Plans uses a small free Cloudflare Worker to pass the invite along. It’s a one-time setup.'}</p>
+    <div class="act-grid">
+      <button class="btn primary full" data-act="settings">⚙️ Add helper URL in Settings</button>
+      ${kind === 'calendar' ? `<button class="btn full" data-act="cal-share" data-id="${id}">📤 For now: send invite to yourself</button>` : ''}
+    </div>
+    <p class="about">Setup steps are in the README that came with Plans.</p>`);
+}
+
+/* ---------- Apple Wallet pass ---------- */
+const hexRgb = h => { const m = String(h).replace('#', '').match(/^([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i); return m ? `rgb(${parseInt(m[1], 16)}, ${parseInt(m[2], 16)}, ${parseInt(m[3], 16)})` : 'rgb(27, 15, 59)'; };
+function isoLocal(d) {
+  const o = -d.getTimezoneOffset(), sg = o >= 0 ? '+' : '-', a = Math.abs(o);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:00${sg}${pad(Math.floor(a / 60))}:${pad(a % 60)}`;
+}
+function buildPass(p) {
+  const th = THEMES.find(t => t[0] === settings.theme) || THEMES[0];
+  const light = !!th[6], { start, end } = planTimes(p);
+  const timeKnown = start && !p.allDay && !p.timeTBD;
+  const when = !start ? { key: 'when', label: 'WHEN', value: 'Date TBD' }
+    : timeKnown ? { key: 'when', label: 'WHEN', value: isoLocal(start), dateStyle: 'PKDateStyleMedium', timeStyle: 'PKDateStyleShort' }
+    : { key: 'when', label: 'WHEN', value: fmtWhen(p) };
+  const aux = [];
+  if (p.loc) aux.push({ key: 'where', label: 'WHERE', value: p.loc.name });
+  if (p.dress) aux.push({ key: 'dress', label: 'DRESS CODE', value: p.dress });
+  const sec = [when];
+  if (timeKnown && p.duration !== 'tbd') sec.push({ key: 'ends', label: 'ENDS', value: isoLocal(end), timeStyle: 'PKDateStyleShort', dateStyle: 'PKDateStyleNone' });
+  else if (p.guests.length) sec.push({ key: 'guests', label: 'GUESTS', value: String(p.guests.length) });
+  const back = [];
+  if (p.loc && (p.loc.full || p.loc.address)) back.push({ key: 'addr', label: 'Address', value: p.loc.full || p.loc.address });
+  if (p.loc && p.loc.lat != null) back.push({ key: 'map', label: 'Map', value: mapsURL(p.loc) });
+  const details = planText(p, { noHead: true, noRefs: true }).slice(0, 1500);
+  if (details) back.push({ key: 'details', label: 'Details', value: details });
+  p.refs.filter(r => r.value).forEach((r, i) => back.push({ key: `ref${i}`, label: r.label, value: r.value }));
+  back.push({ key: 'by', label: 'Made with', value: 'Plans ✨' });
+  const ref = p.refs.find(r => r.value);
+  const pass = {
+    description: `${p.name} (Plans)`, organizationName: 'Plans', logoText: `${p.emoji} Plans`,
+    serialNumber: `${p.id}-${p.updatedAt || p.createdAt || 0}`,
+    backgroundColor: hexRgb(light ? th[5] : th[4]), foregroundColor: light ? 'rgb(42, 24, 64)' : 'rgb(255, 255, 255)', labelColor: hexRgb(th[2]),
+    eventTicket: { headerFields: start ? [{ key: 'cd', label: 'DATE', value: start.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) }] : [],
+      primaryFields: [{ key: 'event', label: 'EVENT', value: p.name }], secondaryFields: sec, auxiliaryFields: aux, backFields: back }
+  };
+  if (start) pass.relevantDate = isoLocal(start);
+  if (p.loc && p.loc.lat != null) pass.locations = [{ latitude: p.loc.lat, longitude: p.loc.lon, relevantText: `${p.emoji} ${p.name} is here!` }];
+  if (ref) pass.barcodes = [{ format: 'PKBarcodeFormatQR', message: ref.value, messageEncoding: 'iso-8859-1', altText: `${ref.label}: ${ref.value}` }];
+  return pass;
+}
+function walletAdd(p) {
+  const h = helperURL(); if (!h) return helperNeeded('wallet', p.id);
+  Sound.play('sparkle');
+  location.href = `${h}/pass?n=${encodeURIComponent(slug(p.name))}&a=${encodeURIComponent(appBase())}&d=${b64url(JSON.stringify(buildPass(p)))}`;
+}
+async function testHelper() {
+  const inp = $('#helper-url'); if (inp) { settings.helper = inp.value.trim(); saveSettings(); }
+  const out = $('#helper-status'), h = helperURL();
+  if (!h) { out.textContent = 'Paste your Worker URL first.'; return; }
+  out.textContent = '⏳ Testing…';
+  try {
+    const r = await fetch(`${h}/health`, { cache: 'no-store' }); const j = await r.json();
+    if (!j.ok || j.app !== 'plans-helper') throw new Error();
+    out.innerHTML = `✅ Calendar: ready<br>${j.wallet ? '✅ Wallet: ready' : '⚠️ Wallet: certificate not added yet (Calendar still works)'}`;
+    Sound.play('yes');
+  } catch { out.textContent = '❌ Couldn’t reach it. Check the URL (it should start with https:// and end in .workers.dev).'; Sound.play('error'); }
 }
 async function calSave(p) {
   // iPhone: the Share sheet is the only reliable way to pick a save location → "Save to Files"
@@ -1090,6 +1170,7 @@ function renderDone(id, wasEdit) {
     ${ticketHTML(p, false)}
     <div class="done-actions">
       <button class="btn primary" data-act="cal" data-id="${p.id}">📅 Add to Apple Calendar</button>
+      <button class="btn" data-act="wallet" data-id="${p.id}">🪪 Add to Apple Wallet</button>
       <button class="btn" data-act="share" data-id="${p.id}">📤 Share with the crew</button>
       <button class="btn ghost" data-act="go-home">🏠 My Plans</button>
     </div></div></div>`;
@@ -1119,6 +1200,7 @@ function detailHTML(p) {
     ${p.files.length ? `<div class="sec-title">📎 Attachments</div><div class="file-grid">${filesHTML(p.files, false)}</div>` : ''}
     <div class="act-grid">
       <button class="btn primary full" data-act="cal" data-id="${p.id}">📅 Add to Apple Calendar</button>
+      <button class="btn full" data-act="wallet" data-id="${p.id}">🪪 Add to Apple Wallet</button>
       <button class="btn" data-act="share" data-id="${p.id}">📤 Share</button>
       <button class="btn" data-act="edit" data-id="${p.id}">✏️ Edit</button>
       <button class="btn" data-act="dup" data-id="${p.id}">🧬 Duplicate</button>
@@ -1163,12 +1245,16 @@ function settingsHTML() {
     <div class="sec-title">🎨 Theme</div><button class="btn small" data-act="themes">🎨 Choose a color theme · ${esc((THEMES.find(t => t[0] === settings.theme) || THEMES[0])[1])}</button>
     <div class="sec-title">⏰ Default calendar reminder</div>
     <div class="chips">${ALARMS.map(([v, l]) => `<button class="chip sm ${settings.alarm === v ? 'on' : ''}" data-act="set-alarm" data-v="${v}">${l}${v !== null && v !== 0 ? ' before' : ''}</button>`).join('')}</div>
+    <div class="sec-title">☁️ Calendar &amp; Wallet helper</div>
+    <input id="helper-url" class="inp" type="url" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://plans-helper.yourname.workers.dev" value="${esc(settings.helper || '')}">
+    <div class="act-grid" style="margin-top:10px"><button class="btn small full" data-act="test-helper">🔌 Save &amp; test</button></div>
+    <p class="hint" id="helper-status" style="text-align:center">${settings.helper ? 'Saved. Tap test to check it.' : 'Needed for Open in Calendar (Home Screen app) and Apple Wallet.'}</p>
     <div class="sec-title">💾 Backup</div>
     <div class="act-grid" style="margin-top:0">
       <button class="btn small" data-act="export">⬆️ Export backup</button>
       <label class="btn small" style="position:relative;overflow:hidden">⬇️ Import backup<input type="file" accept=".json,application/json" id="import-file" style="position:absolute;inset:0;opacity:0"></label>
     </div>
-    <p class="about">Plans v1.4.0 · Everything is stored on this device.<br>Place search by Photon (Komoot) · Map data © OpenStreetMap contributors.</p>`;
+    <p class="about">Plans v1.5.0 · Everything is stored on this device.<br>Place search by Photon (Komoot) · Map data © OpenStreetMap contributors.</p>`;
 }
 function swatchesHTML() {
   const sw = t => `<button class="swatch ${settings.theme === t[0] ? 'on' : ''}" data-act="set-theme" data-v="${t[0]}"><i style="background:linear-gradient(160deg,${t[4]},${t[5]})"><em style="background:${t[2]}"></em><em style="background:${t[3]}"></em></i>${t[1]}</button>`;
@@ -1291,6 +1377,8 @@ const ACTIONS = {
   'cal': el => calendarSheet(el.dataset.id),
   'cal-open': el => calOpen(planById(el.dataset.id)),
   'cal-save': el => calSave(planById(el.dataset.id)),
+  'wallet': el => walletAdd(planById(el.dataset.id)),
+  'test-helper': () => testHelper(),
   'cal-share': el => calShare(planById(el.dataset.id)),
   'share': el => sharePlan(planById(el.dataset.id)),
   'copy': el => copyText(el.dataset.v),
@@ -1383,6 +1471,7 @@ function bindEvents() {
       if (['date', 'time', 'endDate', 'endTime'].includes(b)) { const w = $('#when-summary'); if (w) w.innerHTML = whenStub(S.draft); $$('[data-act="quick-date"]').forEach(c => c.classList.remove('on')); }
       if (b === 'name') $$('[data-act="occasion"]').forEach(c => c.classList.toggle('on', c.dataset.n === t.value));
     }
+    if (t.id === 'helper-url') { settings.helper = t.value.trim(); saveSettings(); return; }
     if (t.id === 'f-emoji') { t.dataset.typed = '1'; if (t.value) useCustomEmoji(t); return; }
     if (t.id === 'f-where') { S.draft.locQuery = t.value; clearTimeout(searchT); searchT = setTimeout(() => searchPlaces(t.value), 450); saveDraftSoon(); }
     if (t.id === 'f-guest' && /[,\n;]/.test(t.value)) { const parts = t.value.split(/[,\n;]/); const rest = parts.pop(); addGuest(parts.join(',')); t.value = rest.trimStart(); }
