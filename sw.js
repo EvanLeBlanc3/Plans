@@ -1,7 +1,7 @@
 /* Plans service worker — offline app shell + Apple Calendar hand-off */
-const CACHE = 'plans-v1.5.1';
+const CACHE = 'plans-v1.5.2';
 const SHELL = [
-  './', './index.html', './styles.css?v=1.5.1', './app.js?v=1.5.1', './manifest.webmanifest',
+  './', './index.html', './styles.css?v=1.5.2', './app.js?v=1.5.2', './manifest.webmanifest',
   './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png'
 ];
 

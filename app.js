@@ -798,7 +798,7 @@ function ticketHTML(d, editable) {
     ${row('food', d.food.on === 'tbd' ? '🤔' : d.food.on ? typeEmoji(FOOD_TYPES, d.food.type) : '🍽️', 'Food', food)}
     ${row('drinks', d.drinks.on === 'tbd' ? '🤔' : d.drinks.on ? typeEmoji(DRINK_TYPES, d.drinks.type) : '🥤', 'Drinks', drinks)}
     ${row('notes', '📝', 'Notes & extras', esc([d.notes, ...d.refs.filter(r => r.value).map(r => `${r.label}: ${r.value}`), d.files.length ? `📎 ${d.files.length} attachment${d.files.length > 1 ? 's' : ''}` : '', alarm && alarm[0] !== null ? `⏰ Reminder: ${alarm[1]}${alarm[0] ? ' before' : ''}` : ''].filter(Boolean).join('\n')))}
-    ${editable ? '<div class="barcode"></div>' : '<div class="t-end"></div>'}
+    <div class="t-end"></div>
   </div>`;
 }
 
@@ -1161,7 +1161,7 @@ function settingsHTML() {
       <button class="btn small" data-act="export">⬆️ Export backup</button>
       <label class="btn small" style="position:relative;overflow:hidden">⬇️ Import backup<input type="file" accept=".json,application/json" id="import-file" style="position:absolute;inset:0;opacity:0"></label>
     </div>
-    <p class="about">Plans v1.5.1 · Everything is stored on this device.<br>Place search by Photon (Komoot) · Map data © OpenStreetMap contributors.</p>`;
+    <p class="about">Plans v1.5.2 · Everything is stored on this device.<br>Place search by Photon (Komoot) · Map data © OpenStreetMap contributors.</p>`;
 }
 function swatchesHTML() {
   const sw = t => `<button class="swatch ${settings.theme === t[0] ? 'on' : ''}" data-act="set-theme" data-v="${t[0]}"><i style="background:linear-gradient(160deg,${t[4]},${t[5]})"><em style="background:${t[2]}"></em><em style="background:${t[3]}"></em></i>${t[1]}</button>`;
