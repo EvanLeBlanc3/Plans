@@ -425,51 +425,45 @@ function downloadBlob(blob, name) {
 const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const isStandalone = () => navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
 function calendarSheet(id) {
+  // Only used when a plan has no date yet — everything else goes straight to Calendar.
   const p = planById(id); if (!p) return;
-  if (!planTimes(p).start) {
-    openSheet(`<div class="d-hero"><span class="de">🗓️</span><h2>No date yet!</h2><span class="pill">${esc(p.emoji)} ${esc(p.name)}</span></div>
-      <p class="hint" style="text-align:center;margin:12px 0 18px">Calendar needs a day to put this on. Pick a date and it's good to go.</p>
-      <div class="act-grid"><button class="btn primary full" data-act="edit-when" data-id="${p.id}">📅 Pick a date</button></div>`);
-    return;
-  }
-  openSheet(`
-    <div class="d-hero"><span class="de">📅</span><h2>Add to Apple Calendar</h2><span class="pill">${esc(p.emoji)} ${esc(p.name)}</span></div>
-    <p class="hint" style="text-align:center;margin:12px 0 18px">Plans builds a real calendar invite: time, place, map pin, reminder, guests, food, drinks, notes &amp; reference numbers.</p>
-    <div class="act-grid">
-      <button class="btn primary full" data-act="cal-open" data-id="${p.id}">📅 Open in Calendar</button>
-      <button class="btn full" data-act="cal-share" data-id="${p.id}">📤 Send invite (Messages, Mail, AirDrop…)</button>
-      <button class="btn small full ghost" data-act="cal-save" data-id="${p.id}">💾 Save .ics file (choose “Save to Files”)</button>
-    </div>
-    <p class="about">On iPhone, tap <b>Add All</b> when the calendar preview pops up.${isStandalone() ? '<br>Using Plans from your Home Screen? If no preview appears, use <b>Send invite</b> and send it to yourself, then tap it. Your friends can tap it too and it lands in their calendar.' : ''}</p>`);
+  openSheet(`<div class="d-hero"><span class="de">🗓️</span><h2>No date yet!</h2><span class="pill">${esc(p.emoji)} ${esc(p.name)}</span></div>
+    <p class="hint" style="text-align:center;margin:12px 0 18px">Calendar needs a day to put this on. Pick a date and it's good to go.</p>
+    <div class="act-grid"><button class="btn primary full" data-act="edit-when" data-id="${p.id}">📅 Pick a date</button></div>`);
 }
-function icsBlob(p) { return new Blob([buildICS(p)], { type: 'text/calendar;charset=utf-8' }); }
+// UTF-8 safe base64url (keeps emoji in titles intact)
+function b64url(str) {
+  const bytes = new TextEncoder().encode(str); let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+// A real same-origin URL that the service worker answers with Content-Type: text/calendar.
+// iOS treats that like any normal .ics link and pops the "Add All" calendar preview — in Safari AND from the Home Screen.
+const calURL = p => new URL(`calendar/${slug(p.name)}.ics?e=${b64url(buildICS(p))}`, location.href).href;
 function calOpen(p) {
-  // Same method as v1.0–1.3 (the one that worked): hand iOS a text/calendar blob, which pops the "Add All" preview.
+  if (!p) return;
+  if (!planTimes(p).start) return calendarSheet(p.id);
   Sound.play('sparkle');
-  const blob = icsBlob(p);
+  const ics = buildICS(p);
   if (isIOS) {
-    const url = URL.createObjectURL(blob);
-    if (isStandalone()) window.open(url, '_blank'); else location.href = url;
-    setTimeout(() => URL.revokeObjectURL(url), 120000);
-  } else downloadBlob(blob, `${slug(p.name)}.ics`);
+    // must stay synchronous inside the tap so iOS allows it
+    if (navigator.serviceWorker && navigator.serviceWorker.controller) location.href = calURL(p);
+    else location.href = 'data:text/calendar;charset=utf-8,' + encodeURIComponent(ics);
+    toast('Tap “Add All” to drop it in your calendar 📅', 3200);
+  } else {
+    downloadBlob(new Blob([ics], { type: 'text/calendar;charset=utf-8' }), `${slug(p.name)}.ics`);
+    toast('Calendar file downloaded — open it to add 📅', 3200);
+  }
 }
-async function calSave(p) {
-  // iPhone: the Share sheet is the only reliable way to pick a save location → "Save to Files"
+async function calShare(p) {
+  if (!p) return;
+  if (!planTimes(p).start) return calendarSheet(p.id);
   const name = `${slug(p.name)}.ics`, ics = buildICS(p);
   const file = new File([ics], name, { type: 'text/calendar' });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try { await navigator.share({ files: [file] }); Sound.play('sparkle'); toast('Saved 📂'); }
-    catch (e) { if (e.name !== 'AbortError') { downloadBlob(new Blob([ics], { type: 'application/octet-stream' }), name); } }
-    return;
-  }
-  downloadBlob(new Blob([ics], { type: 'application/octet-stream' }), name);
-  Sound.play('sparkle');
-}
-async function calShare(p) {
-  const file = new File([buildICS(p)], `${slug(p.name)}.ics`, { type: 'text/calendar' });
-  if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try { await navigator.share({ files: [file], title: p.name }); Sound.play('sparkle'); } catch (e) { if (e.name !== 'AbortError') toast("Couldn't open the share sheet 😕 Try again"); }
-  } else calSave(p);
+    try { await navigator.share({ files: [file], title: p.name }); Sound.play('sparkle'); }
+    catch (e) { if (e.name !== 'AbortError') toast("Couldn't open the share sheet 😕 Try again"); }
+  } else downloadBlob(new Blob([ics], { type: 'text/calendar;charset=utf-8' }), name);
 }
 async function sharePlan(p) {
   const text = planText(p, { links: true, sig: true });
@@ -650,8 +644,6 @@ const STEP_HTML = {
   review(d) { return ticketHTML(d, true); }
 };
 const TBD_NAME = 'Something Fun (TBD)';
-const _unused = {
-};
 
 function emojiList(d) {
   const mine = (settings.myEmojis || []).filter(e => !EMOJIS.includes(e));
@@ -781,7 +773,7 @@ function guestsHTML(d, newName) {
 function refsHTML(d) {
   return d.refs.map((r, i) => `<div class="ref-row"><span class="rl">${esc(r.label)}</span><input class="inp" data-ref="${i}" value="${esc(r.value)}" placeholder="ABC123" autocapitalize="characters" autocomplete="off"><button class="x" data-act="del-ref" data-i="${i}">✕</button></div>`).join('');
 }
-function fileIcon(t) { return t.startsWith('image/') ? '🖼️' : t === 'application/pdf' ? '📕' : t.includes('pass') ? '🎫' : t.startsWith('video/') ? '🎞️' : t.startsWith('audio/') ? '🎵' : '📄'; }
+function fileIcon(t) { return t.startsWith('image/') ? '🖼️' : t === 'application/pdf' ? '📕' : t.startsWith('video/') ? '🎞️' : t.startsWith('audio/') ? '🎵' : '📄'; }
 function filesHTML(files, editable) {
   return files.map(f => `<div class="ftile" data-act="view-file" data-id="${f.id}">${f.thumb ? `<img src="${f.thumb}" alt="">` : `<span class="fi">${fileIcon(f.type)}</span><span class="fn">${esc(f.name)}</span>`}
     ${editable ? `<button class="mini-x" data-act="del-file" data-id="${f.id}" aria-label="Remove">✕</button>` : ''}</div>`).join('');
@@ -806,7 +798,7 @@ function ticketHTML(d, editable) {
     ${row('food', d.food.on === 'tbd' ? '🤔' : d.food.on ? typeEmoji(FOOD_TYPES, d.food.type) : '🍽️', 'Food', food)}
     ${row('drinks', d.drinks.on === 'tbd' ? '🤔' : d.drinks.on ? typeEmoji(DRINK_TYPES, d.drinks.type) : '🥤', 'Drinks', drinks)}
     ${row('notes', '📝', 'Notes & extras', esc([d.notes, ...d.refs.filter(r => r.value).map(r => `${r.label}: ${r.value}`), d.files.length ? `📎 ${d.files.length} attachment${d.files.length > 1 ? 's' : ''}` : '', alarm && alarm[0] !== null ? `⏰ Reminder: ${alarm[1]}${alarm[0] ? ' before' : ''}` : ''].filter(Boolean).join('\n')))}
-    <div class="barcode"></div>
+    ${editable ? '<div class="barcode"></div>' : '<div class="t-end"></div>'}
   </div>`;
 }
 
@@ -1090,6 +1082,7 @@ function renderDone(id, wasEdit) {
     ${ticketHTML(p, false)}
     <div class="done-actions">
       <button class="btn primary" data-act="cal" data-id="${p.id}">📅 Add to Apple Calendar</button>
+      <button class="btn" data-act="cal-share" data-id="${p.id}">🗓️ Send calendar invite</button>
       <button class="btn" data-act="share" data-id="${p.id}">📤 Share with the crew</button>
       <button class="btn ghost" data-act="go-home">🏠 My Plans</button>
     </div></div></div>`;
@@ -1168,7 +1161,7 @@ function settingsHTML() {
       <button class="btn small" data-act="export">⬆️ Export backup</button>
       <label class="btn small" style="position:relative;overflow:hidden">⬇️ Import backup<input type="file" accept=".json,application/json" id="import-file" style="position:absolute;inset:0;opacity:0"></label>
     </div>
-    <p class="about">Plans v1.4.0 · Everything is stored on this device.<br>Place search by Photon (Komoot) · Map data © OpenStreetMap contributors.</p>`;
+    <p class="about">Plans v1.5.1 · Everything is stored on this device.<br>Place search by Photon (Komoot) · Map data © OpenStreetMap contributors.</p>`;
 }
 function swatchesHTML() {
   const sw = t => `<button class="swatch ${settings.theme === t[0] ? 'on' : ''}" data-act="set-theme" data-v="${t[0]}"><i style="background:linear-gradient(160deg,${t[4]},${t[5]})"><em style="background:${t[2]}"></em><em style="background:${t[3]}"></em></i>${t[1]}</button>`;
@@ -1288,9 +1281,7 @@ const ACTIONS = {
   'alarm': el => { S.draft.alarm = el.dataset.v === 'null' ? null : +el.dataset.v; $$('[data-act="alarm"]').forEach(b => b.classList.toggle('on', b === el)); Sound.play('tick'); saveDraftSoon(); },
 
   // plan actions
-  'cal': el => calendarSheet(el.dataset.id),
-  'cal-open': el => calOpen(planById(el.dataset.id)),
-  'cal-save': el => calSave(planById(el.dataset.id)),
+  'cal': el => calOpen(planById(el.dataset.id)),
   'cal-share': el => calShare(planById(el.dataset.id)),
   'share': el => sharePlan(planById(el.dataset.id)),
   'copy': el => copyText(el.dataset.v),
@@ -1427,7 +1418,9 @@ async function boot() {
   applyTheme(); FX.init(); orientationLock(); bindEvents();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
-  view.innerHTML = `<div class="splash"><div class="splash-logo"><img src="icons/icon-192.png" alt=""></div>
+  view.innerHTML = `<div class="splash"><div class="splash-logo"><div class="cal-ico" aria-hidden="true"><i class="ring r1"></i><i class="ring r2"></i>
+      <div class="cal-top">${new Date().toLocaleDateString(undefined, { month: 'short' }).toUpperCase()}</div>
+      <div class="cal-day">${new Date().getDate()}</div><div class="cal-check">✓</div></div></div>
     <div class="splash-word">${'Plans'.split('').map((c, i) => `<span style="animation-delay:${.25 + i * .07}s">${c}</span>`).join('')}</div>
     <div class="splash-tag">Making plans, minus the boring.</div></div>`;
   await sleep(1350);
