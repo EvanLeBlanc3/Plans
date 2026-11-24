@@ -262,10 +262,15 @@ const bumpSel = sel => requestAnimationFrame(() => bump($(sel)));
 
 /* ---------- toast ---------- */
 let toastT;
-function toast(msg) {
+let toastUntil = 0;
+function hideToast() { const t = $('#toast'); if (t) t.classList.remove('show'); toastUntil = 0; clearTimeout(toastT); }
+function toast(msg, ms = 2400) {
   const t = $('#toast'); t.textContent = msg; t.classList.add('show');
-  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2400);
+  toastUntil = Date.now() + ms; clearTimeout(toastT); toastT = setTimeout(hideToast, ms);
 }
+// iOS freezes timers while the Calendar/Share sheet is open, so also hide on return, on tap, and on a clock check
+['visibilitychange', 'pageshow', 'focus'].forEach(ev => window.addEventListener(ev, () => { if (toastUntil && Date.now() >= toastUntil - 200) hideToast(); }));
+setInterval(() => { if (toastUntil && Date.now() > toastUntil) hideToast(); }, 500);
 
 /* =========================================================
    TIME HELPERS
@@ -433,26 +438,37 @@ function calendarSheet(id) {
     <div class="act-grid">
       <button class="btn primary full" data-act="cal-open" data-id="${p.id}">📅 Open in Calendar</button>
       <button class="btn full" data-act="cal-share" data-id="${p.id}">📤 Send invite (Messages, Mail, AirDrop…)</button>
-      <button class="btn small full ghost" data-act="cal-save" data-id="${p.id}">💾 Save .ics file instead</button>
+      <button class="btn small full ghost" data-act="cal-save" data-id="${p.id}">💾 Save .ics file (choose “Save to Files”)</button>
     </div>
     <p class="about">On iPhone, tap <b>Add All</b> when the calendar preview pops up.${isStandalone() ? '<br>Using Plans from your Home Screen? If no preview appears, use <b>Send invite</b> and send it to yourself, then tap it. Your friends can tap it too and it lands in their calendar.' : ''}</p>`);
 }
 function icsBlob(p) { return new Blob([buildICS(p)], { type: 'text/calendar;charset=utf-8' }); }
 function calOpen(p) {
+  // Same method as v1.0–1.3 (the one that worked): hand iOS a text/calendar blob, which pops the "Add All" preview.
   Sound.play('sparkle');
+  const blob = icsBlob(p);
   if (isIOS) {
-    // iOS: opening the .ics directly shows the "Add to Calendar" preview
-    const url = URL.createObjectURL(icsBlob(p));
+    const url = URL.createObjectURL(blob);
     if (isStandalone()) window.open(url, '_blank'); else location.href = url;
     setTimeout(() => URL.revokeObjectURL(url), 120000);
-  } else downloadBlob(icsBlob(p), `${slug(p.name)}.ics`);
-  toast('Calendar invite ready 📅');
+  } else downloadBlob(blob, `${slug(p.name)}.ics`);
 }
-function calSave(p) { downloadBlob(icsBlob(p), `${slug(p.name)}.ics`); Sound.play('sparkle'); toast('Saved — open it from Files/Downloads 📂'); }
+async function calSave(p) {
+  // iPhone: the Share sheet is the only reliable way to pick a save location → "Save to Files"
+  const name = `${slug(p.name)}.ics`, ics = buildICS(p);
+  const file = new File([ics], name, { type: 'text/calendar' });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); Sound.play('sparkle'); toast('Saved 📂'); }
+    catch (e) { if (e.name !== 'AbortError') { downloadBlob(new Blob([ics], { type: 'application/octet-stream' }), name); } }
+    return;
+  }
+  downloadBlob(new Blob([ics], { type: 'application/octet-stream' }), name);
+  Sound.play('sparkle');
+}
 async function calShare(p) {
   const file = new File([buildICS(p)], `${slug(p.name)}.ics`, { type: 'text/calendar' });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
-    try { await navigator.share({ files: [file], title: p.name }); Sound.play('sparkle'); } catch (e) { if (e.name !== 'AbortError') calSave(p); }
+    try { await navigator.share({ files: [file], title: p.name }); Sound.play('sparkle'); } catch (e) { if (e.name !== 'AbortError') toast("Couldn't open the share sheet 😕 Try again"); }
   } else calSave(p);
 }
 async function sharePlan(p) {
@@ -1152,7 +1168,7 @@ function settingsHTML() {
       <button class="btn small" data-act="export">⬆️ Export backup</button>
       <label class="btn small" style="position:relative;overflow:hidden">⬇️ Import backup<input type="file" accept=".json,application/json" id="import-file" style="position:absolute;inset:0;opacity:0"></label>
     </div>
-    <p class="about">Plans v1.3.0 · Everything is stored on this device.<br>Place search by Photon (Komoot) · Map data © OpenStreetMap contributors.</p>`;
+    <p class="about">Plans v1.4.0 · Everything is stored on this device.<br>Place search by Photon (Komoot) · Map data © OpenStreetMap contributors.</p>`;
 }
 function swatchesHTML() {
   const sw = t => `<button class="swatch ${settings.theme === t[0] ? 'on' : ''}" data-act="set-theme" data-v="${t[0]}"><i style="background:linear-gradient(160deg,${t[4]},${t[5]})"><em style="background:${t[2]}"></em><em style="background:${t[3]}"></em></i>${t[1]}</button>`;
@@ -1352,6 +1368,7 @@ function setLoc(l) {
    BOOT
    ========================================================= */
 function bindEvents() {
+  $('#toast').addEventListener('click', hideToast);
   app.addEventListener('click', e => {
     const el = e.target.closest('[data-act]'); if (!el || !app.contains(el)) return;
     const fn = ACTIONS[el.dataset.act]; if (fn) fn(el, e);

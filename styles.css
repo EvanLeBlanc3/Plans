@@ -486,6 +486,7 @@ input::-webkit-date-and-time-value { text-align:left; }
 #toast { position:absolute; left:50%; top:calc(var(--st) + 10px); transform:translate(-50%,-160%); z-index:90; max-width:88%; padding:12px 18px; border-radius:18px; font-weight:700; font-size:15px;
   background:var(--card2); -webkit-backdrop-filter:blur(18px); backdrop-filter:blur(18px); border:1px solid var(--line); box-shadow:0 12px 30px rgba(0,0,0,.35);
   transition:transform .45s cubic-bezier(.3,1.5,.5,1); text-align:center; pointer-events:none; }
+#toast.show { pointer-events:auto; }
 [data-theme] #toast { background:color-mix(in srgb,var(--bg1) 80%,var(--a2)); }
 #toast.show { transform:translate(-50%,0); }
 
