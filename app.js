@@ -97,7 +97,7 @@ const DRINK_TYPES = [
 ];
 const REF_TYPES = [['Reservation ID','🍽️'],['Ticket #','🎟️'],['Confirmation #','✅'],['Booking Ref','🏨'],['Order #','📦'],['Flight #','✈️'],['Other','🔖']];
 const ALARMS = [[null,'None'],[0,'At start'],[15,'15 min'],[30,'30 min'],[60,'1 hour'],[120,'2 hours'],[1440,'1 day'],[2880,'2 days']];
-const DURATIONS = [[30,'30m'],[60,'1h'],[90,'1.5h'],[120,'2h'],[180,'3h'],[240,'4h'],[360,'6h'],['custom','Custom']];
+const DURATIONS = [[30,'30m'],[60,'1h'],[90,'1.5h'],[120,'2h'],[180,'3h'],[240,'4h'],[360,'6h'],['custom','Custom'],['tbd','🤷 Not sure']];
 const RSVP = { invited: ['✉️','Invited'], going: ['✅','Going'], maybe: ['🤔','Maybe'], no: ['❌',"Can't"] };
 const RSVP_ORDER = ['invited','going','maybe','no'];
 // [key, label, accent1, accent2, bg1, bg2, light?]
@@ -271,8 +271,9 @@ function toast(msg) {
    TIME HELPERS
    ========================================================= */
 function planTimes(p) {
-  if (!p || !p.date) return { start: null, end: null };
+  if (!p || !p.date || p.dateTBD) return { start: null, end: null };
   const [y, m, d] = p.date.split('-').map(Number);
+  if (p.timeTBD && !p.allDay) return { start: new Date(y, m - 1, d), end: new Date(y, m - 1, d + 1) };
   if (p.allDay) return { start: new Date(y, m - 1, d), end: new Date(y, m - 1, d + (p.days || 1)) };
   const [hh, mm] = (p.time || '19:00').split(':').map(Number);
   const start = new Date(y, m - 1, d, hh, mm);
@@ -290,12 +291,16 @@ const fmtT = d => d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-
 const fmtD = d => d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
 function fmtWhen(p) {
   const { start, end } = planTimes(p); if (!start) return 'Date TBD';
+  if (p.timeTBD && !p.allDay) return `${fmtD(start)} · Time TBD`;
   if (p.allDay) { const last = new Date(end.getTime() - 864e5); return ((p.days || 1) > 1 ? `${fmtD(start)} – ${fmtD(last)}` : fmtD(start)) + ' · All day'; }
+  if (p.duration === 'tbd') return `${fmtD(start)} · ${fmtT(start)} · end TBD`;
   if (sameDay(start, end)) return `${fmtD(start)} · ${fmtT(start)} – ${fmtT(end)}`;
   return `${fmtD(start)} ${fmtT(start)} – ${fmtD(end)} ${fmtT(end)}`;
 }
 function fmtDur(p) {
-  const { start, end } = planTimes(p); if (!start) return '';
+  const { start, end } = planTimes(p); if (!start) return 'Length TBD';
+  if (p.timeTBD && !p.allDay) return 'Time & length TBD';
+  if (p.duration === 'tbd') return 'Length TBD';
   if (p.allDay) return `${p.days || 1} day${(p.days || 1) > 1 ? 's' : ''}`;
   const m = Math.round((end - start) / 60000), h = Math.floor(m / 60), r = m % 60;
   return h ? `${h} hr${h > 1 ? 's' : ''}${r ? ` ${r} min` : ''}` : `${r} min`;
@@ -343,7 +348,7 @@ const initials = n => n.trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').
 const avatar = n => `<span class="av" style="background:linear-gradient(135deg,hsl(${hue(n)} 75% 58%),hsl(${(hue(n) + 40) % 360} 75% 48%))">${esc(initials(n))}</span>`;
 const mapsURL = l => l.lat != null ? `https://maps.apple.com/?q=${encodeURIComponent(l.name)}&ll=${l.lat},${l.lon}${l.full ? `&address=${encodeURIComponent(l.full)}` : ''}` : `https://maps.apple.com/?q=${encodeURIComponent([l.name, l.address].filter(Boolean).join(' '))}`;
 const locLine = l => l ? [l.name, l.address].filter(Boolean).join(', ') : '';
-const dressEmoji = k => (DRESS.find(x => x.k === k) || {}).e || '👔';
+const dressEmoji = k => k === 'Not sure yet' ? '🤷' : (DRESS.find(x => x.k === k) || {}).e || '👔';
 const typeEmoji = (list, k) => (list.find(x => x.k === k) || {}).e || '✨';
 
 function planText(p, o = {}) {
@@ -351,13 +356,16 @@ function planText(p, o = {}) {
   if (!o.noHead) { L.push(`${p.emoji} ${p.name}`); L.push(`🗓 ${fmtWhen(p)}`); }
   if (p.loc) { L.push(`📍 ${locLine(p.loc)}`); if (o.links) L.push(mapsURL(p.loc)); }
   if (p.dress || p.dressNote) L.push(`👔 Dress code: ${[p.dress, p.dressNote].filter(Boolean).join(' — ')}`);
-  if (p.food.on) {
+  if (p.food.on === 'tbd') L.push('🍽 Food: TBD');
+  else if (p.food.on) {
     L.push(`🍽 Food: ${[p.food.type || 'Yes', p.food.details].filter(Boolean).join(' — ')}`);
     Object.entries(p.food.assign || {}).forEach(([n, v]) => v && L.push(`   • ${n}: ${v}`));
   } else if (p.food.on === false) L.push('🍽 Food: None planned');
-  if (p.drinks.on) L.push(`🥂 Drinks: ${[p.drinks.type || 'Yes', p.drinks.details].filter(Boolean).join(' — ')}`);
+  if (p.drinks.on === 'tbd') L.push('🥂 Drinks: TBD');
+  else if (p.drinks.on) L.push(`🥂 Drinks: ${[p.drinks.type || 'Yes', p.drinks.details].filter(Boolean).join(' — ')}`);
   else if (p.drinks.on === false) L.push('🥂 Drinks: None planned');
-  if (p.guests.length) L.push(`👥 Guests (${p.guests.length}): ${p.guests.map(g => g.name).join(', ')}`);
+  if (p.guests.length) L.push(`👥 Guests (${p.guests.length}): ${p.guests.map(g => g.name).join(', ')}${p.guestsTBD ? ' + more TBD' : ''}`);
+  else if (p.guestsTBD) L.push('👥 Guests: TBD');
   if (!o.noRefs) p.refs.filter(r => r.value).forEach(r => L.push(`🎟 ${r.label}: ${r.value}`));
   if (p.notes) L.push(`📝 ${p.notes}`);
   if (o.ics && p.files.length) L.push(`📎 ${p.files.length} attachment${p.files.length > 1 ? 's' : ''} saved in the Plans app`);
@@ -381,7 +389,7 @@ function buildICS(p) {
   const { start, end } = planTimes(p);
   const L = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Plans//Plans App 1.0//EN', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'BEGIN:VEVENT',
     `UID:${p.id}@plans.app`, `DTSTAMP:${icsUTC(new Date())}`];
-  if (p.allDay) { L.push(`DTSTART;VALUE=DATE:${icsDay(start)}`, `DTEND;VALUE=DATE:${icsDay(end)}`); }
+  if (p.allDay || p.timeTBD) { L.push(`DTSTART;VALUE=DATE:${icsDay(start)}`, `DTEND;VALUE=DATE:${icsDay(end)}`); }
   else { L.push(`DTSTART:${icsUTC(start)}`, `DTEND:${icsUTC(end)}`); }
   L.push(`SUMMARY:${icsEsc(`${p.emoji} ${p.name}`)}`);
   if (p.loc) {
@@ -413,6 +421,12 @@ const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platfor
 const isStandalone = () => navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
 function calendarSheet(id) {
   const p = planById(id); if (!p) return;
+  if (!planTimes(p).start) {
+    openSheet(`<div class="d-hero"><span class="de">🗓️</span><h2>No date yet!</h2><span class="pill">${esc(p.emoji)} ${esc(p.name)}</span></div>
+      <p class="hint" style="text-align:center;margin:12px 0 18px">Calendar needs a day to put this on. Pick a date and it's good to go.</p>
+      <div class="act-grid"><button class="btn primary full" data-act="edit-when" data-id="${p.id}">📅 Pick a date</button></div>`);
+    return;
+  }
   openSheet(`
     <div class="d-hero"><span class="de">📅</span><h2>Add to Apple Calendar</h2><span class="pill">${esc(p.emoji)} ${esc(p.name)}</span></div>
     <p class="hint" style="text-align:center;margin:12px 0 18px">Plans builds a real calendar invite: time, place, map pin, reminder, guests, food, drinks, notes &amp; reference numbers.</p>
@@ -548,6 +562,7 @@ function stepHead(st, i) {
 const STEP_HTML = {
   name(d) {
     return `<input id="f-name" class="big-input" data-bind="name" placeholder="e.g. Taco Tuesday Extravaganza" maxlength="80" value="${esc(d.name)}" enterkeyhint="next" autocomplete="off" autocapitalize="words">
+<button class="unsure ${d.name === TBD_NAME ? 'on' : ''}" data-act="unsure-name"><span class="ue">🤷</span><span class="ut">Not sure what to call it yet</span><span class="uc">${d.name === TBD_NAME ? '✓' : ''}</span></button>
       <div class="label">Pick a vibe <small class="lbl-hint">or tap ＋ for your own</small></div>
       <div class="hscroll" id="emo-row">${emojiRowHTML(d)}</div>
       <div class="label">Need inspiration?</div>
@@ -561,31 +576,40 @@ const STEP_HTML = {
         <button class="chip sm" data-act="loc-quick" data-v="My place">🏠 My place</button>
         <button class="chip sm" data-act="loc-quick" data-v="Their place">🏡 Their place</button>
         <button class="chip sm" data-act="loc-quick" data-v="Virtual / Online">💻 Virtual</button>
-        <button class="chip sm" data-act="loc-quick" data-v="TBD">🤷 TBD</button>
       </div>
+      <button class="unsure ${d.loc && d.loc.tbd ? 'on' : ''}" data-act="unsure-where"><span class="ue">🤷</span><span class="ut">Don't know where yet</span><span class="uc">${d.loc && d.loc.tbd ? '✓' : ''}</span></button>
       <div id="loc-selected">${locCard(d.loc)}</div>
       <div id="results" class="results"></div>
       <p class="credit">Place search by Photon (Komoot) · Map data © OpenStreetMap contributors</p>`;
   },
   when(d) {
-    return `<div class="hscroll">${quickDates().map(q => `<button class="chip ${d.date === q.date && d.time === q.time && !d.allDay ? 'on' : ''}" data-act="quick-date" data-d="${q.date}" data-t="${q.time}">${q.label}</button>`).join('')}</div>
+    return `<button class="unsure ${d.dateTBD ? 'on' : ''}" data-act="unsure-date"><span class="ue">🤷</span><span class="ut">Don't know when yet</span><span class="uc">${d.dateTBD ? '✓' : ''}</span></button>
+      <div id="when-body" class="${d.dateTBD ? 'tbd-dim' : ''}">
+      <div class="label">Quick picks</div>
+      <div class="hscroll qd-row">${quickDates().map(q => `<button class="qd ${!d.dateTBD && d.date === q.date && d.time === q.time && !d.allDay && !d.timeTBD ? 'on' : ''}" data-act="quick-date" data-d="${q.date}" data-t="${q.time}"><span class="qe">${q.e}</span><b>${q.t}</b><small>${q.sub}</small></button>`).join('')}</div>
       <div class="grid2">
         <label class="fld"><span>📅 Date</span><input class="inp" type="date" data-bind="date" value="${esc(d.date)}"></label>
-        <label class="fld"><span>🕖 Starts</span><input class="inp" type="time" data-bind="time" value="${esc(d.time)}" ${d.allDay ? 'disabled' : ''}></label>
+        <label class="fld"><span>🕖 Starts</span><input class="inp" type="time" data-bind="time" value="${esc(d.time)}" ${d.allDay || d.timeTBD ? 'disabled' : ''}></label>
       </div>
       <div class="toggle-row"><span>☀️ All-day event<small>Trips, festivals, lazy Sundays</small></span><button class="switch ${d.allDay ? 'on' : ''}" data-act="toggle-allday" aria-label="All day"></button></div>
+      <div class="toggle-row" id="timetbd-row" ${d.allDay ? 'hidden' : ''}><span>🕐 Not sure of the time<small>Know the day, figuring out the rest</small></span><button class="switch ${d.timeTBD ? 'on' : ''}" data-act="toggle-timetbd" aria-label="Time not decided"></button></div>
+      <div id="dur-section" class="${d.timeTBD && !d.allDay ? 'tbd-dim' : ''}">
       <div class="label" id="dur-label">${d.allDay ? 'How many days?' : 'How long?'}</div>
       <div id="dur-wrap">${durationHTML(d)}</div>
-      <div id="when-summary">${whenStub(d)}</div>`;
+      </div>
+      <div id="when-summary">${whenStub(d)}</div>
+      </div>`;
   },
   dress(d) {
     return `<div class="dress-grid">${DRESS.map(x => `<button class="dress ${d.dress === x.k ? 'on' : ''}" data-act="dress" data-v="${esc(x.k)}"><span class="de">${x.e}</span><b>${esc(x.k)}</b><small>${esc(x.d)}</small></button>`).join('')}</div>
+      <div style="margin-top:12px"><button class="unsure ${d.dress === 'Not sure yet' ? 'on' : ''}" data-act="unsure-dress"><span class="ue">🤷</span><span class="ut">No idea what to wear yet</span><span class="uc">${d.dress === 'Not sure yet' ? '✓' : ''}</span></button></div>
       <label class="fld"><span>✍️ Any specifics?</span><input class="inp" data-bind="dressNote" value="${esc(d.dressNote)}" placeholder="e.g. Wear something green 💚" maxlength="120"></label>`;
   },
   guests(d) {
     const recent = recentGuests(d);
     return `<div class="add-row"><input id="f-guest" class="inp" placeholder="Type a name, hit enter" enterkeyhint="enter" autocomplete="off" autocapitalize="words" maxlength="40"><button class="add-btn" data-act="add-guest" aria-label="Add guest">＋</button></div>
       <p class="hint">Tip: paste a list like “Sam, Alex, Jordan” to add everyone at once.</p>
+      <div style="margin-top:12px"><button class="unsure ${d.guestsTBD ? 'on' : ''}" data-act="unsure-guests"><span class="ue">🤷</span><span class="ut">Not sure who's coming yet</span><span class="uc">${d.guestsTBD ? '✓' : ''}</span></button></div>
       ${recent.length ? `<div class="label">Regulars</div><div class="chips" id="recent">${recent.map(n => `<button class="chip sm" data-act="recent-guest" data-n="${esc(n)}">＋ ${esc(n)}</button>`).join('')}</div>` : ''}
       <div class="label">Guest list <span class="count-pill" id="gcount">${d.guests.length} + you</span></div>
       <div id="guest-list" class="guest-list">${guestsHTML(d)}</div>`;
@@ -593,7 +617,8 @@ const STEP_HTML = {
   food(d) { return ynStep(d, 'food'); },
   drinks(d) { return ynStep(d, 'drinks'); },
   notes(d) {
-    return `<label class="fld" style="margin-top:0"><span>📝 Notes</span><textarea class="inp" data-bind="notes" rows="4" placeholder="Parking info, gate code, gift ideas, secret plans…">${esc(d.notes)}</textarea></label>
+    return `<button class="unsure ${false ? 'on' : ''}" data-act="unsure-notes"><span class="ue">🤷</span><span class="ut">Nothing else to add right now</span><span class="uc">${false ? '✓' : ''}</span></button>
+      <label class="fld"><span>📝 Notes</span><textarea class="inp" data-bind="notes" rows="4" placeholder="Parking info, gate code, gift ideas, secret plans…">${esc(d.notes)}</textarea></label>
       <div class="label">🎟️ Reference numbers</div>
       <div id="refs">${refsHTML(d)}</div>
       <div class="chips">${REF_TYPES.map(([t, e]) => `<button class="chip sm" data-act="add-ref" data-v="${esc(t)}">${e} ${esc(t)}</button>`).join('')}</div>
@@ -607,6 +632,9 @@ const STEP_HTML = {
       <div class="chips">${ALARMS.map(([v, l]) => `<button class="chip sm ${d.alarm === v ? 'on' : ''}" data-act="alarm" data-v="${v}">${l}${v !== null && v !== 0 ? ' before' : ''}</button>`).join('')}</div>`;
   },
   review(d) { return ticketHTML(d, true); }
+};
+const TBD_NAME = 'Something Fun (TBD)';
+const _unused = {
 };
 
 function emojiList(d) {
@@ -647,8 +675,9 @@ const YN = {
 function ynStep(d, key) {
   const c = YN[key], f = d[key];
   return `<div class="yn">
-      <button class="yn-btn ${f.on === true ? 'on' : f.on === false ? 'off' : ''}" data-act="yn" data-k="${key}" data-v="1"><span class="ye">${c.yes[0]}</span>${c.yes[1]}</button>
-      <button class="yn-btn ${f.on === false ? 'on' : f.on === true ? 'off' : ''}" data-act="yn" data-k="${key}" data-v="0"><span class="ye">${c.no[0]}</span>${c.no[1]}</button>
+      <button class="yn-btn ${f.on === true ? 'on' : f.on != null ? 'off' : ''}" data-act="yn" data-k="${key}" data-v="1"><span class="ye">${c.yes[0]}</span>${c.yes[1]}</button>
+      <button class="yn-btn ${f.on === false ? 'on' : f.on != null ? 'off' : ''}" data-act="yn" data-k="${key}" data-v="0"><span class="ye">${c.no[0]}</span>${c.no[1]}</button>
+      <button class="yn-btn ${f.on === 'tbd' ? 'on' : f.on != null ? 'off' : ''}" data-act="yn" data-k="${key}" data-v="tbd"><span class="ye">🤔</span>Not sure</button>
     </div><div id="yn-body">${ynBody(d, key, false)}</div>`;
 }
 function ynBody(d, key, animate) {
@@ -659,6 +688,7 @@ function ynBody(d, key, animate) {
       <label class="fld"><span>${c.det} Details</span><textarea class="inp" id="yn-details" data-bind="${key}.details" rows="3" placeholder="${esc(t ? t.ph : 'Any details?')}">${esc(f.details)}</textarea></label>
       <div id="assign-wrap">${assignHTML(d, key)}</div>
     </div>`;
+  if (f.on === 'tbd') return `<div class="no-msg ${animate ? 'pop' : ''}"><span class="big">🤔</span>${key === 'food' ? "Food's a mystery for now. We'll figure it out." : "Drinks TBD. Future you will decide."}</div>`;
   if (f.on === false) return `<div class="no-msg ${animate ? 'pop' : ''}"><span class="big">${c.noEmoji}</span>${esc(c.noMsg)}</div>`;
   return '';
 }
@@ -668,11 +698,19 @@ function assignHTML(d, key) {
   return `<div class="reveal"><div class="label">Who's bringing what?</div>${d.guests.map(g => `<div class="assign-row">${avatar(g.name)}<span class="an">${esc(g.name)}</span><input class="inp" data-assign="${esc(g.name)}" value="${esc((f.assign || {})[g.name] || '')}" placeholder="bringing…" maxlength="60"></div>`).join('')}</div>`;
 }
 // When-step partial updater
+function setUnsure(act, on) {
+  const b = $(`.unsure[data-act="${act}"]`); if (!b) return;
+  b.classList.toggle('on', !!on); b.querySelector('.uc').textContent = on ? '✓' : '';
+}
 function updateWhen(opts = {}) {
   const d = S.draft;
-  $$('[data-act="quick-date"]').forEach(c => c.classList.toggle('on', !d.allDay && c.dataset.d === d.date && c.dataset.t === d.time));
+  $$('[data-act="quick-date"]').forEach(c => c.classList.toggle('on', !d.dateTBD && !d.allDay && !d.timeTBD && c.dataset.d === d.date && c.dataset.t === d.time));
+  setUnsure('unsure-date', d.dateTBD); const wb = $('#when-body'); if (wb) wb.classList.toggle('tbd-dim', !!d.dateTBD);
+  const tr = $('#timetbd-row'); if (tr) tr.hidden = !!d.allDay;
+  const ts = $('[data-act="toggle-timetbd"]'); if (ts) ts.classList.toggle('on', !!d.timeTBD);
+  const ds = $('#dur-section'); if (ds) ds.classList.toggle('tbd-dim', !!(d.timeTBD && !d.allDay));
   const di = $('[data-bind="date"]'); if (di && di.value !== d.date) di.value = d.date;
-  const ti = $('[data-bind="time"]'); if (ti) { if (ti.value !== d.time) ti.value = d.time; ti.disabled = d.allDay; }
+  const ti = $('[data-bind="time"]'); if (ti) { if (ti.value !== d.time) ti.value = d.time; ti.disabled = d.allDay || d.timeTBD; }
   const sw = $('[data-act="toggle-allday"]'); if (sw) sw.classList.toggle('on', d.allDay);
   const lb = $('#dur-label'); if (lb) lb.textContent = d.allDay ? 'How many days?' : 'How long?';
   if (opts.dur) $('#dur-wrap').innerHTML = durationHTML(d, opts.animate);
@@ -681,15 +719,19 @@ function updateWhen(opts = {}) {
 }
 
 function quickDates() {
-  const now = new Date(), out = [], mk = (d, t, label) => out.push({ date: isoDate(d), time: t, label });
-  const add = n => { const d = new Date(now); d.setDate(d.getDate() + n); return d; };
-  mk(now, now.getHours() >= 19 ? '21:00' : '19:00', '🌙 Tonight');
-  mk(add(1), '19:00', '☀️ Tomorrow');
+  const now = new Date(), out = [], add = n => { const d = new Date(now); d.setDate(d.getDate() + n); return d; };
+  const md = d => d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  const tl = t => { const [h, m] = t.split(':').map(Number); return new Date(2000, 0, 1, h, m).toLocaleTimeString(undefined, { hour: 'numeric', minute: m ? '2-digit' : undefined }); };
+  const mk = (d, time, e, t) => out.push({ date: isoDate(d), time, e, t, sub: `${md(d)} · ${tl(time)}` });
   const dow = now.getDay(), toDow = t => ((t - dow + 7) % 7) || 7;
   const fri = add(toDow(5)), sat = add(toDow(6)), sun = add(toDow(0));
-  const md = d => `${d.getMonth() + 1}/${d.getDate()}`;
-  mk(fri, '19:00', `🎉 Fri ${md(fri)}`); mk(sat, '11:00', `🥞 Sat brunch ${md(sat)}`); mk(sat, '19:00', `🪩 Sat night ${md(sat)}`); mk(sun, '13:00', `😌 Sun ${md(sun)}`);
-  mk(add(7), '19:00', '📆 Next week');
+  mk(now, now.getHours() >= 19 ? '21:00' : '19:00', '🌙', 'Tonight');
+  mk(add(1), '19:00', '☀️', 'Tomorrow');
+  mk(fri, '19:00', '🎉', 'Friday night');
+  mk(sat, '11:00', '🥞', 'Saturday brunch');
+  mk(sat, '19:00', '🪩', 'Saturday night');
+  mk(sun, '13:00', '😌', 'Sunday afternoon');
+  mk(add(7), '19:00', '📆', 'Next week');
   return out;
 }
 function durationHTML(d, animate) {
@@ -700,6 +742,7 @@ function durationHTML(d, animate) {
 }
 function whenStub(d, animate = true) {
   const { start } = planTimes(d);
+  if (d.dateTBD) return `<div class="stub empty-stub">🤷 Date TBD. You can pick one anytime by editing the plan.</div>`;
   if (!start) return `<div class="stub empty-stub">Pick a date and watch the magic ✨</div>`;
   return `<div class="stub ${animate ? 'stub-in' : ''}"><div class="sd"><small>${start.toLocaleDateString(undefined, { month: 'short' })}</small><b>${start.getDate()}</b><small>${start.toLocaleDateString(undefined, { weekday: 'short' })}</small></div>
     <div class="sb"><b>${esc(fmtWhen(d))}</b><small>⏳ ${esc(fmtDur(d))}</small><small>🚀 ${esc(countdown(d))}</small></div></div>`;
@@ -733,19 +776,19 @@ function ticketHTML(d, editable) {
     const tag = editable ? 'button' : 'div';
     return `<${tag} class="t-row" ${editable ? `data-act="goto" data-step="${STEP_IX[step]}"` : ''}><span class="ti">${icon}</span><span class="tv"><small>${label}</small>${value ? `<b>${value}</b>` : `<b class="dim">Not set</b>`}</span>${editable ? '<span class="tedit">✏️</span>' : ''}</${tag}>`;
   };
-  const food = d.food.on ? esc([d.food.type || 'Yes!', d.food.details].filter(Boolean).join(' — ')) + (Object.values(d.food.assign || {}).some(Boolean) ? '\n' + Object.entries(d.food.assign).filter(x => x[1]).map(([n, v]) => `• ${esc(n)}: ${esc(v)}`).join('\n') : '') : d.food.on === false ? 'No food planned' : '';
-  const drinks = d.drinks.on ? esc([d.drinks.type || 'Yes!', d.drinks.details].filter(Boolean).join(' — ')) : d.drinks.on === false ? 'No drinks planned' : '';
+  const food = d.food.on === 'tbd' ? 'Not sure yet 🤔' : d.food.on ? esc([d.food.type || 'Yes!', d.food.details].filter(Boolean).join(' — ')) + (Object.values(d.food.assign || {}).some(Boolean) ? '\n' + Object.entries(d.food.assign).filter(x => x[1]).map(([n, v]) => `• ${esc(n)}: ${esc(v)}`).join('\n') : '') : d.food.on === false ? 'No food planned' : '';
+  const drinks = d.drinks.on === 'tbd' ? 'Not sure yet 🤔' : d.drinks.on ? esc([d.drinks.type || 'Yes!', d.drinks.details].filter(Boolean).join(' — ')) : d.drinks.on === false ? 'No drinks planned' : '';
   const alarm = ALARMS.find(a => a[0] === d.alarm);
   return `<div class="ticket">
     <div class="t-top"><span class="te">${esc(d.emoji)}</span><h2>${esc(d.name || 'Untitled plan')}</h2><small>${esc(countdown(d))}</small></div>
     <div class="t-perf"></div>
     ${row('name', '🏷️', 'Occasion', esc(d.name))}
     ${row('where', '📍', 'Where', d.loc ? esc(locLine(d.loc)) : '')}
-    ${row('when', '🗓️', 'When', d.date ? `${esc(fmtWhen(d))}\n⏳ ${esc(fmtDur(d))}` : '')}
+    ${row('when', '🗓️', 'When', d.date || d.dateTBD ? `${esc(fmtWhen(d))}\n⏳ ${esc(fmtDur(d))}` : '')}
     ${row('dress', d.dress ? dressEmoji(d.dress) : '👔', 'Dress code', esc([d.dress, d.dressNote].filter(Boolean).join(' — ')))}
-    ${row('guests', '👥', `Guests${d.guests.length ? ` (${d.guests.length})` : ''}`, esc(d.guests.map(g => g.name).join(', ')))}
-    ${row('food', d.food.on ? typeEmoji(FOOD_TYPES, d.food.type) : '🍽️', 'Food', food)}
-    ${row('drinks', d.drinks.on ? typeEmoji(DRINK_TYPES, d.drinks.type) : '🥤', 'Drinks', drinks)}
+    ${row('guests', '👥', `Guests${d.guests.length ? ` (${d.guests.length})` : ''}`, esc(d.guests.map(g => g.name).join(', ') + (d.guestsTBD ? (d.guests.length ? ' + more TBD' : 'Guest list TBD') : '')))}
+    ${row('food', d.food.on === 'tbd' ? '🤔' : d.food.on ? typeEmoji(FOOD_TYPES, d.food.type) : '🍽️', 'Food', food)}
+    ${row('drinks', d.drinks.on === 'tbd' ? '🤔' : d.drinks.on ? typeEmoji(DRINK_TYPES, d.drinks.type) : '🥤', 'Drinks', drinks)}
     ${row('notes', '📝', 'Notes & extras', esc([d.notes, ...d.refs.filter(r => r.value).map(r => `${r.label}: ${r.value}`), d.files.length ? `📎 ${d.files.length} attachment${d.files.length > 1 ? 's' : ''}` : '', alarm && alarm[0] !== null ? `⏰ Reminder: ${alarm[1]}${alarm[0] ? ' before' : ''}` : ''].filter(Boolean).join('\n')))}
     <div class="barcode"></div>
   </div>`;
@@ -814,10 +857,10 @@ function afterStep(key) {
 function validate(key) {
   const d = S.draft;
   if (key === 'name' && !d.name.trim()) return 'Every great plan needs a name ✍️';
-  if (key === 'when') {
+  if (key === 'when' && !d.dateTBD) {
     if (!d.date) return 'Pick a date first 📅';
-    if (!d.allDay && !d.time) return 'What time does it start? ⏰';
-    if (!d.allDay && d.duration === 'custom') {
+    if (!d.allDay && !d.timeTBD && !d.time) return 'What time does it start? ⏰';
+    if (!d.allDay && !d.timeTBD && d.duration === 'custom') {
       if (!d.endTime) return 'When does it end? 🏁';
       const [y, m, dd] = (d.endDate || d.date).split('-').map(Number), [h, n] = d.endTime.split(':').map(Number);
       if (new Date(y, m - 1, dd, h, n) <= planTimes({ ...d, duration: 120 }).start) return 'It ends before it starts? Time travel not supported 🕰️';
@@ -1049,8 +1092,9 @@ function detailHTML(p) {
       ${row('🗓️', 'When', esc(fmtWhen(p)), '', `⏳ ${esc(fmtDur(p))}${alarm && alarm[0] !== null ? ` · ⏰ ${esc(alarm[1])}${alarm[0] ? ' before' : ''}` : ''}`)}
       ${p.loc ? row('📍', 'Where', esc(p.loc.name), (p.loc.lat != null || p.loc.address) ? `<a class="link" href="${esc(mapsURL(p.loc))}" target="_blank" rel="noopener">Maps ↗</a>` : '', esc(p.loc.address || '')) : ''}
       ${p.dress || p.dressNote ? row(dressEmoji(p.dress), 'Dress code', esc(p.dress || 'Custom'), '', esc(p.dressNote)) : ''}
-      ${p.food.on !== null ? row(p.food.on ? typeEmoji(FOOD_TYPES, p.food.type) : '🍽️', 'Food', p.food.on ? esc(p.food.type || 'Yes!') : 'None planned', '', esc([p.food.details, ...assigns.map(([n, v]) => `• ${n}: ${v}`)].filter(Boolean).join('\n'))) : ''}
-      ${p.drinks.on !== null ? row(p.drinks.on ? typeEmoji(DRINK_TYPES, p.drinks.type) : '🥤', 'Drinks', p.drinks.on ? esc(p.drinks.type || 'Yes!') : 'None planned', '', esc(p.drinks.details)) : ''}
+      ${p.food.on === 'tbd' ? row('🤔', 'Food', 'Not sure yet') : p.food.on !== null ? row(p.food.on ? typeEmoji(FOOD_TYPES, p.food.type) : '🍽️', 'Food', p.food.on ? esc(p.food.type || 'Yes!') : 'None planned', '', esc([p.food.details, ...assigns.map(([n, v]) => `• ${n}: ${v}`)].filter(Boolean).join('\n'))) : ''}
+      ${p.drinks.on === 'tbd' ? row('🤔', 'Drinks', 'Not sure yet') : p.drinks.on !== null ? row(p.drinks.on ? typeEmoji(DRINK_TYPES, p.drinks.type) : '🥤', 'Drinks', p.drinks.on ? esc(p.drinks.type || 'Yes!') : 'None planned', '', esc(p.drinks.details)) : ''}
+      ${p.guestsTBD && !p.guests.length ? row('👥', 'Guests', 'Guest list TBD') : ''}
       ${p.notes ? row('📝', 'Notes', esc(p.notes)) : ''}
     </div>
     ${p.refs.some(r => r.value) ? `<div class="sec-title">🎟️ Reference numbers · tap to copy</div><div class="d-box">${p.refs.filter(r => r.value).map(r => `<div class="d-row copyable" data-act="copy" data-v="${esc(r.value)}"><span class="di">🔖</span><span class="dv"><small>${esc(r.label)}</small><b style="font-family:ui-monospace,Menlo,monospace">${esc(r.value)}</b></span><span class="link">Copy</span></div>`).join('')}</div>` : ''}
@@ -1108,7 +1152,7 @@ function settingsHTML() {
       <button class="btn small" data-act="export">⬆️ Export backup</button>
       <label class="btn small" style="position:relative;overflow:hidden">⬇️ Import backup<input type="file" accept=".json,application/json" id="import-file" style="position:absolute;inset:0;opacity:0"></label>
     </div>
-    <p class="about">Plans v1.2.0 · Everything is stored on this device.<br>Place search by Photon (Komoot) · Map data © OpenStreetMap contributors.</p>`;
+    <p class="about">Plans v1.3.0 · Everything is stored on this device.<br>Place search by Photon (Komoot) · Map data © OpenStreetMap contributors.</p>`;
 }
 function swatchesHTML() {
   const sw = t => `<button class="swatch ${settings.theme === t[0] ? 'on' : ''}" data-act="set-theme" data-v="${t[0]}"><i style="background:linear-gradient(160deg,${t[4]},${t[5]})"><em style="background:${t[2]}"></em><em style="background:${t[3]}"></em></i>${t[1]}</button>`;
@@ -1188,28 +1232,27 @@ const ACTIONS = {
   'loc-clear': () => { S.draft.loc = null; Sound.play('remove'); $('#loc-selected').innerHTML = ''; const i = $('#f-where'); if (i) { i.focus(); if (i.value) searchPlaces(i.value); } saveDraftSoon(); },
 
   // when
-  'quick-date': el => { const wasAll = S.draft.allDay; S.draft.date = el.dataset.d; S.draft.time = el.dataset.t; S.draft.allDay = false; Sound.play('pop'); updateWhen({ dur: wasAll }); saveDraftSoon(); },
+  'quick-date': el => { const wasAll = S.draft.allDay; S.draft.date = el.dataset.d; S.draft.time = el.dataset.t; S.draft.allDay = false; S.draft.dateTBD = false; S.draft.timeTBD = false; Sound.play('pop'); updateWhen({ dur: wasAll }); saveDraftSoon(); },
   'toggle-allday': () => { S.draft.allDay = !S.draft.allDay; Sound.play('toggle'); updateWhen({ dur: true }); saveDraftSoon(); },
   'duration': el => {
     const v = el.dataset.v, wasCustom = S.draft.duration === 'custom';
-    S.draft.duration = v === 'custom' ? 'custom' : +v;
+    S.draft.duration = v === 'custom' || v === 'tbd' ? v : +v;
     if (v === 'custom' && !S.draft.endDate) S.draft.endDate = S.draft.date;
     Sound.play('pop'); updateWhen({ dur: wasCustom !== (v === 'custom'), animate: v === 'custom' }); saveDraftSoon();
   },
   'days': el => { S.draft.days = Math.max(1, Math.min(30, (S.draft.days || 1) + +el.dataset.v)); Sound.play('tick'); updateWhen({ dur: true }); saveDraftSoon(); },
-  'dress': el => { const v = el.dataset.v; S.draft.dress = S.draft.dress === v ? '' : v; $$('.dress').forEach(b => b.classList.toggle('on', b.dataset.v === S.draft.dress)); Sound.play(S.draft.dress ? 'pop' : 'remove'); saveDraftSoon(); },
+  'dress': el => { setUnsure('unsure-dress', false); const v = el.dataset.v; S.draft.dress = S.draft.dress === v ? '' : v; $$('.dress').forEach(b => b.classList.toggle('on', b.dataset.v === S.draft.dress)); Sound.play(S.draft.dress ? 'pop' : 'remove'); saveDraftSoon(); },
   'add-guest': (el, e) => { const i = $('#f-guest'); if (i.value.trim()) { addGuest(i.value, e); i.value = ''; } i.focus(); },
   'recent-guest': el => addGuest(el.dataset.n),
   'del-guest': el => { const i = +el.dataset.i, chip = el.closest('.gchip'); const n = S.draft.guests[i].name; chip.classList.add('out'); Sound.play('remove'); setTimeout(() => { S.draft.guests.splice(i, 1); delete S.draft.food.assign[n]; $('#guest-list').innerHTML = guestsHTML(S.draft); $('#gcount').textContent = `${S.draft.guests.length} + you`; saveDraftSoon(); }, 250); },
 
   // food & drinks
   'yn': el => {
-    const k = el.dataset.k, yes = el.dataset.v === '1', f = S.draft[k];
-    if (f.on === yes) return;
-    if (yes) { f.on = true; Sound.play('yes'); }
-    else { S.draft[k] = k === 'food' ? { on: false, type: '', details: '', assign: {} } : { on: false, type: '', details: '' }; Sound.play('no'); }
-    const on = S.draft[k].on;
-    $$(`.yn-btn[data-k="${k}"]`).forEach(b => { const mine = (b.dataset.v === '1') === on; b.classList.toggle('on', mine); b.classList.toggle('off', !mine); });
+    const k = el.dataset.k, v = el.dataset.v, val = v === '1' ? true : v === '0' ? false : 'tbd', f = S.draft[k];
+    if (f.on === val) return;
+    if (val === true) { f.on = true; Sound.play('yes'); }
+    else { S.draft[k] = k === 'food' ? { on: val, type: '', details: '', assign: {} } : { on: val, type: '', details: '' }; Sound.play(val === false ? 'no' : 'pop'); }
+    $$(`.yn-btn[data-k="${k}"]`).forEach(b => { const bv = b.dataset.v === '1' ? true : b.dataset.v === '0' ? false : 'tbd'; b.classList.toggle('on', bv === val); b.classList.toggle('off', bv !== val); });
     $('#yn-body').innerHTML = ynBody(S.draft, k, true); saveDraftSoon();
   },
   'ytype': el => {
@@ -1268,12 +1311,36 @@ const ACTIONS = {
   'set-alarm': el => { settings.alarm = el.dataset.v === 'null' ? null : +el.dataset.v; saveSettings(); $$('[data-act="set-alarm"]').forEach(b => b.classList.toggle('on', b === el)); Sound.play('tick'); },
   'themes': () => themeSheet(),
   'random-theme': () => { const o = THEMES.filter(t => t[0] !== settings.theme); settings.theme = pick(o)[0]; saveSettings(); applyTheme(); Sound.play('sparkle'); updateSheet(`<h3>🎨 Color themes</h3><p class="hint" style="margin-top:-6px">Tap one to try it on. It's saved automatically.</p>${swatchesHTML()}<div class="set-row" style="margin-top:20px"><span>🎲 Surprise me<small>Random theme</small></span><button class="btn small" style="width:auto" data-act="random-theme">Shuffle</button></div>`); toast(`Theme: ${THEMES.find(t => t[0] === settings.theme)[1]} 🎨`); },
+  'unsure-name': () => {
+    const d = S.draft, on = d.name !== TBD_NAME;
+    d.name = on ? TBD_NAME : ''; if (on && d.emoji === '🎉') setDraftEmoji('🤷');
+    const ni = $('#f-name'); if (ni) ni.value = d.name;
+    $$('[data-act="occasion"]').forEach(c => c.classList.remove('on'));
+    setUnsure('unsure-name', on); Sound.play(on ? 'pop' : 'remove'); saveDraftSoon();
+  },
+  'unsure-where': () => {
+    if (S.draft.loc && S.draft.loc.tbd) { ACTIONS['loc-clear'](); setUnsure('unsure-where', false); return; }
+    setLoc({ name: 'Location TBD', address: '', lat: null, lon: null, kind: null, tbd: true }); setUnsure('unsure-where', true);
+  },
+  'unsure-date': () => { S.draft.dateTBD = !S.draft.dateTBD; Sound.play(S.draft.dateTBD ? 'pop' : 'toggle'); updateWhen(); saveDraftSoon(); },
+  'toggle-timetbd': () => { S.draft.timeTBD = !S.draft.timeTBD; Sound.play('toggle'); updateWhen(); saveDraftSoon(); },
+  'unsure-dress': () => {
+    const on = S.draft.dress !== 'Not sure yet'; S.draft.dress = on ? 'Not sure yet' : '';
+    $$('.dress').forEach(b => b.classList.remove('on')); setUnsure('unsure-dress', on); Sound.play(on ? 'pop' : 'remove'); saveDraftSoon();
+  },
+  'unsure-guests': () => { S.draft.guestsTBD = !S.draft.guestsTBD; setUnsure('unsure-guests', S.draft.guestsTBD); Sound.play(S.draft.guestsTBD ? 'pop' : 'remove'); saveDraftSoon(); },
+  'unsure-notes': (el, e) => { const b = el; b.classList.add('on'); b.querySelector('.uc').textContent = '✓'; wizNext(true, e); },
+  'edit-when': el => {
+    const p = planById(el.dataset.id); closeSheet(); S.draft = clone(p); S.draft.dateTBD = false; S.editing = true; S.returnToReview = true; S.step = STEP_IX.when;
+    view.innerHTML = ''; Sound.play('whoosh'); renderWizard(1); saveDraft();
+  },
   'export': () => exportBackup()
 };
 
 function setLoc(l) {
   if (!l || !l.name) return;
-  S.draft.loc = { name: l.name, address: l.address || '', full: l.full || '', parts: l.parts || null, lat: l.lat ?? null, lon: l.lon ?? null, kind: l.kind || null };
+  setUnsure('unsure-where', !!l.tbd);
+  S.draft.loc = { tbd: !!l.tbd, name: l.name, address: l.address || '', full: l.full || '', parts: l.parts || null, lat: l.lat ?? null, lon: l.lon ?? null, kind: l.kind || null };
   Sound.play('pin');
   $('#loc-selected').innerHTML = locCard(S.draft.loc); $('#results').innerHTML = '';
   const i = $('#f-where'); if (i) i.blur();
@@ -1294,6 +1361,8 @@ function bindEvents() {
     if (t.dataset.bind && S.draft) {
       setPath(S.draft, t.dataset.bind, t.value); saveDraftSoon();
       const b = t.dataset.bind;
+      if (b === 'date' && t.value) { S.draft.dateTBD = false; updateWhen(); }
+      if (b === 'name') setUnsure('unsure-name', t.value === TBD_NAME);
       if (['date', 'time', 'endDate', 'endTime'].includes(b)) { const w = $('#when-summary'); if (w) w.innerHTML = whenStub(S.draft); $$('[data-act="quick-date"]').forEach(c => c.classList.remove('on')); }
       if (b === 'name') $$('[data-act="occasion"]').forEach(c => c.classList.toggle('on', c.dataset.n === t.value));
     }

@@ -536,3 +536,30 @@ a.btn.primary { color:#fff; }
 .emo-add:focus-within { border-style:solid; box-shadow:0 0 0 3px color-mix(in srgb,var(--a1) 30%,transparent); }
 .emo.mine { box-shadow:inset 0 -3px 0 var(--a3); }
 .lbl-hint { text-transform:none; letter-spacing:0; font-weight:600; font-size:12px; opacity:.85; }
+
+/* ---- v1.3: quick picks readable + "not sure" options ---- */
+.hscroll > * { flex:none; }
+.qd-row { gap:10px; }
+.qd { flex:none; width:132px; display:flex; flex-direction:column; align-items:flex-start; gap:2px; padding:12px 14px; border-radius:18px; text-align:left;
+  background:var(--card); border:2px solid var(--line); scroll-snap-align:start; transition:background .2s, border-color .2s, box-shadow .2s; }
+.qd .qe { font-size:24px; line-height:1; margin-bottom:6px; }
+.qd b { font-size:15.5px; line-height:1.2; white-space:normal; }
+.qd small { font-size:12.5px; color:var(--muted); line-height:1.3; white-space:normal; }
+.qd.on { border-color:var(--a1); background:color-mix(in srgb,var(--a1) 18%,var(--card)); box-shadow:0 6px 16px color-mix(in srgb,var(--a1) 30%,transparent); }
+#dur-wrap .chip { font-size:16px; padding:11px 16px; }
+
+.unsure { display:flex; align-items:center; gap:12px; width:100%; margin-top:14px; padding:13px 16px; border-radius:18px; text-align:left;
+  background:transparent; border:2px dashed var(--line); color:var(--muted); font-weight:700; font-size:15.5px; transition:background .2s, border-color .2s, color .2s; }
+.unsure .ue { font-size:22px; }
+.unsure .ut { flex:1; }
+.unsure .uc { width:24px; height:24px; border-radius:50%; display:grid; place-items:center; font-size:13px; font-weight:800; border:2px solid var(--line); }
+.unsure.on { border-style:solid; border-color:var(--a3); color:var(--text); background:color-mix(in srgb,var(--a3) 14%,var(--card)); }
+.unsure.on .uc { background:var(--a3); border-color:var(--a3); color:#1b0f3b; }
+.step-head + .unsure { margin-top:0; margin-bottom:6px; }
+.tbd-dim { opacity:.35; pointer-events:none; transition:opacity .25s; filter:saturate(.6); }
+#when-body, #dur-section { transition:opacity .25s; }
+#when-body.tbd-dim #when-summary { opacity:1; }
+.yn { grid-template-columns:1fr 1fr 1fr; gap:10px; }
+.yn-btn { padding:18px 6px; font-size:16px; }
+.yn-btn .ye { font-size:34px; }
+[hidden] { display:none !important; }

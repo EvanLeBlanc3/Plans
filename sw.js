@@ -1,7 +1,7 @@
 /* Plans service worker — offline app shell */
-const CACHE = 'plans-v1.2.0';
+const CACHE = 'plans-v1.3.0';
 const SHELL = [
-  './', './index.html', './styles.css?v=1.2.0', './app.js?v=1.2.0', './manifest.webmanifest',
+  './', './index.html', './styles.css?v=1.3.0', './app.js?v=1.3.0', './manifest.webmanifest',
   './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png'
 ];
 self.addEventListener('install', e => {
